@@ -227,75 +227,6 @@ def export_srt(text: str, audio_out: Any) -> Tuple[Optional[str], str]:
 
 
 # ─────────────────────────────────────────────
-# Emotion / Prosody helpers  →  map sliders to sampling params
-# (Nothing is injected into the spoken text)
-# ─────────────────────────────────────────────
-
-# Each emotion has a characteristic base temperature.
-# Calm/Somber = lower (controlled); Joyful/Intense = higher (expressive).
-EMOTION_BASE_TEMP: Dict[str, float] = {
-    "Neutral":       0.70,
-    "Nostalgic":     0.80,
-    "Melancholic":   0.75,
-    "Warm & Tender": 0.72,
-    "Joyful":        0.88,
-    "Longing":       0.78,
-    "Calm":          0.58,
-    "Intense":       0.92,
-    "Somber":        0.63,
-    "Hopeful":       0.82,
-    "Playful":       0.88,
-}
-
-PACE_PHRASES: Dict[str, str] = {
-    "Unhurried": "Unhurried",
-    "Natural":   "Natural",
-    "Brisk":     "Brisk",
-}
-
-
-def compute_gen_params(
-    emotion: str,
-    intensity: int,   # 1-10: how expressive the delivery is
-    warmth: int,      # 1-10: tonal warmth (affects repetition_penalty)
-    stability: int,   # 1-10: consistency (inversely scales temperature)
-) -> Tuple[float, float, float]:
-    """
-    Map slider values to model sampling parameters.
-    Returns (temperature, top_p, repetition_penalty).
-    Nothing is injected into the spoken text.
-    """
-    # Base temperature from emotion preset
-    base_temp = EMOTION_BASE_TEMP.get(emotion, 0.70)
-
-    # Stability (1=expressive, 10=consistent) scales base_temp
-    # stability=10 -> 60% of base; stability=1 -> 130% of base
-    stability_mult = 1.30 - (stability - 1) * (0.70 / 9)
-    temperature = round(min(1.4, max(0.25, base_temp * stability_mult)), 2)
-
-    # Intensity (1-10) -> top_p: higher intensity = wider sampling mass
-    top_p = round(0.85 + (intensity - 1) * (0.14 / 9), 3)
-
-    # Warmth (1-10) -> repetition_penalty: warmer = slight penalty to avoid
-    # robotic repetition; cool = closer to 1.0 (more neutral)
-    rep_penalty = round(1.0 + (warmth - 1) * (0.07 / 9), 3)
-
-    return temperature, top_p, rep_penalty
-
-
-def preview_gen_params(
-    emotion: str, intensity: int, warmth: int, stability: int
-) -> str:
-    """Live-preview: show computed sampling parameters."""
-    t, top_p, rep = compute_gen_params(emotion, intensity, warmth, stability)
-    return (
-        f"temperature={t}  ·  top_p={top_p}  ·  repetition_penalty={rep}\n"
-        f"(Nothing extra is spoken — these control HOW the model generates)"
-    )
-
-
-
-# ─────────────────────────────────────────────
 # TTS generation functions
 # ─────────────────────────────────────────────
 
@@ -307,12 +238,6 @@ def run_voice_clone(
     target_text: str,
     language: str,
     whisper_size: str,
-    # emotion controls → mapped to sampling params, NOT injected as text
-    emotion: str = "Neutral",
-    intensity: int = 5,
-    warmth: int = 5,
-    pace: str = "Natural",
-    stability: int = 6,
 ) -> Tuple[Optional[Any], str]:
     try:
         if not target_text or not target_text.strip():
@@ -326,26 +251,15 @@ def run_voice_clone(
                 "Either fill in the reference text (or click Auto-Transcribe), "
                 "or enable 'Use x-vector only'."
             )
-
-        # Map emotion controls → sampling parameters (no text injection)
-        temperature, top_p, rep_penalty = compute_gen_params(emotion, intensity, warmth, stability)
-
         tts = load_tts(model_id)
         wavs, sr = tts.generate_voice_clone(
-            text=target_text.strip(),   # ← only the actual text, nothing extra
+            text=target_text.strip(),
             language=language,
             ref_audio=at,
             ref_text=ref_text.strip() if ref_text else None,
             x_vector_only_mode=bool(use_xvec),
-            temperature=temperature,
-            top_p=top_p,
-            repetition_penalty=rep_penalty,
         )
-        status = (
-            f"✅ Done.  emotion={emotion}  temp={temperature}  "
-            f"top_p={top_p}  rep_penalty={rep_penalty}"
-        )
-        return (sr, wavs[0].astype(np.float32)), status
+        return (sr, wavs[0].astype(np.float32)), "✅ Generation complete."
     except Exception as e:
         return None, f"❌ {type(e).__name__}: {e}"
 
@@ -453,7 +367,7 @@ def build_app(default_whisper: str = "base") -> gr.Blocks:
         with gr.Tab("🔁 Voice Clone"):
             gr.Markdown(
                 "Upload a 3-10 second reference clip. Click **Auto-Transcribe** to fill the transcript, "
-                "then enter your target text, tune the **🎭 Emotion Controls**, and click **Generate**."
+                "then enter your target text and click **Generate**."
             )
             with gr.Row():
                 # Left column: inputs
@@ -502,57 +416,6 @@ def build_app(default_whisper: str = "base") -> gr.Blocks:
                             value="Auto",
                             interactive=True,
                         )
-
-                    # ── Emotion & Expression Controls ──────────────────────
-                    with gr.Accordion("🎭 Emotion & Expression Controls", open=True):
-                        gr.Markdown(
-                            "> These controls build a **style annotation** injected into the text context.  "
-                            "> The **Stability** slider maps directly to model `temperature`."
-                        )
-                        with gr.Row():
-                            vc_emotion = gr.Dropdown(
-                                label="Emotion",
-                                choices=list(EMOTION_BASE_TEMP.keys()),
-                                value="Neutral",
-                                interactive=True,
-                                scale=2,
-                            )
-                            vc_pace = gr.Dropdown(
-                                label="Pace Feel",
-                                choices=list(PACE_PHRASES.keys()),
-                                value="Natural",
-                                interactive=True,
-                                scale=1,
-                            )
-                        with gr.Row():
-                            vc_intensity = gr.Slider(
-                                label="Intensity",
-                                minimum=1, maximum=10, value=5, step=1,
-                                info="1 = barely felt · 10 = deeply expressive",
-                            )
-                            vc_warmth = gr.Slider(
-                                label="Warmth",
-                                minimum=1, maximum=10, value=5, step=1,
-                                info="1 = cool/distant · 10 = deeply intimate",
-                            )
-                            vc_stability = gr.Slider(
-                                label="Stability",
-                                minimum=1, maximum=10, value=6, step=1,
-                                info="1 = expressive/varied · 10 = consistent/controlled",
-                            )
-                        vc_custom_addon = gr.Textbox(
-                            label="Custom Style Add-on (optional)",
-                            lines=1,
-                            placeholder='e.g. "with subtle breathiness" or "like a gentle lullaby"',
-                            visible=False,  # hidden — adding this to text would be spoken aloud
-                        )
-                        vc_instruct_preview = gr.Textbox(
-                            label="� Sampling Params Preview",
-                            lines=2,
-                            interactive=False,
-                            value="temperature=0.76  ·  top_p=0.866  ·  repetition_penalty=1.04",
-                        )
-
                     vc_gen_btn = gr.Button("🔊 Generate", variant="primary", size="lg")
 
                 # Right column: outputs
@@ -569,16 +432,7 @@ def build_app(default_whisper: str = "base") -> gr.Blocks:
                         vc_export_btn = gr.Button("📥 Export SRT", variant="secondary")
                     vc_srt_out = gr.File(label="SRT Subtitle File", file_types=[".srt"])
 
-            # ── Event handlers ────────────────────────────────────────────
-            # Live preview: update sampling params whenever any slider/dropdown changes
-            emotion_inputs_preview = [vc_emotion, vc_intensity, vc_warmth, vc_stability]
-            for ctrl in emotion_inputs_preview:
-                ctrl.change(
-                    fn=preview_gen_params,
-                    inputs=emotion_inputs_preview,
-                    outputs=[vc_instruct_preview],
-                )
-
+            # Event handlers
             vc_transcribe_btn.click(
                 fn=auto_transcribe,
                 inputs=[vc_ref_audio, vc_whisper_size],
@@ -587,12 +441,7 @@ def build_app(default_whisper: str = "base") -> gr.Blocks:
 
             vc_gen_btn.click(
                 fn=run_voice_clone,
-                inputs=[
-                    vc_model_id, vc_ref_audio, vc_ref_text, vc_xvec,
-                    vc_target_text, vc_lang, vc_whisper_size,
-                    vc_emotion, vc_intensity, vc_warmth, vc_pace,
-                    vc_stability,
-                ],
+                inputs=[vc_model_id, vc_ref_audio, vc_ref_text, vc_xvec, vc_target_text, vc_lang, vc_whisper_size],
                 outputs=[vc_audio_out, vc_status],
             )
 
