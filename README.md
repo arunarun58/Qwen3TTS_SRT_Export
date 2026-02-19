@@ -1,7 +1,7 @@
 # Qwen3-TTS — Auto-Transcribe + SRT Export
 
 > **Enhanced fork of [QwenLM/Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)** with two new features designed for free **Google Colab** usage:
-> 1. 🎤 **Auto-transcribe** reference audio via [OpenAI Whisper](https://github.com/openai/whisper) (like F5-TTS)
+> 1. 🎤 **Auto-transcribe** reference audio via [OpenAI Whisper](https://github.com/openai/whisper) 
 > 2. 📥 **SRT subtitle export** from synthesized speech
 
 ---
