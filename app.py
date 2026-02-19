@@ -512,7 +512,7 @@ def build_app(default_whisper: str = "base") -> gr.Blocks:
                         with gr.Row():
                             vc_emotion = gr.Dropdown(
                                 label="Emotion",
-                                choices=list(EMOTION_MAP.keys()),
+                                choices=list(EMOTION_BASE_TEMP.keys()),
                                 value="Neutral",
                                 interactive=True,
                                 scale=2,
