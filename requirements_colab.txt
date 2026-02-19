@@ -1,0 +1,15 @@
+# Qwen3-TTS — Colab requirements
+# Install with: pip install -r requirements_colab.txt
+
+# Core TTS package
+qwen-tts
+
+# Auto-transcription
+openai-whisper
+
+# UI
+gradio>=4.0.0
+
+# Audio I/O (usually already installed by qwen-tts)
+soundfile
+librosa
