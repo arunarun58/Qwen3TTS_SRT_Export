@@ -421,7 +421,7 @@ def build_app(default_whisper: str = "base") -> gr.Blocks:
                 # Right column: outputs
                 with gr.Column(scale=3):
                     gr.Markdown("### Output")
-                    vc_audio_out = gr.Audio(label="Synthesized Audio", type="numpy")
+                    vc_audio_out = gr.Audio(label="Synthesized Audio", type="numpy", show_download_button=True)
                     vc_status = gr.Textbox(
                         label="Status",
                         lines=3,
@@ -492,7 +492,7 @@ def build_app(default_whisper: str = "base") -> gr.Blocks:
 
                 with gr.Column(scale=3):
                     gr.Markdown("### Output")
-                    cv_audio_out = gr.Audio(label="Synthesized Audio", type="numpy")
+                    cv_audio_out = gr.Audio(label="Synthesized Audio", type="numpy", show_download_button=True)
                     cv_status = gr.Textbox(
                         label="Status",
                         lines=3,
@@ -551,7 +551,7 @@ def build_app(default_whisper: str = "base") -> gr.Blocks:
 
                 with gr.Column(scale=3):
                     gr.Markdown("### Output")
-                    vd_audio_out = gr.Audio(label="Synthesized Audio", type="numpy")
+                    vd_audio_out = gr.Audio(label="Synthesized Audio", type="numpy", show_download_button=True)
                     vd_status = gr.Textbox(
                         label="Status",
                         lines=3,
