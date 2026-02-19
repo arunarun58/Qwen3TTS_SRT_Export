@@ -227,113 +227,72 @@ def export_srt(text: str, audio_out: Any) -> Tuple[Optional[str], str]:
 
 
 # ─────────────────────────────────────────────
-# Emotion / Prosody helpers
+# Emotion / Prosody helpers  →  map sliders to sampling params
+# (Nothing is injected into the spoken text)
 # ─────────────────────────────────────────────
 
-# Emotions and their natural-language descriptors
-EMOTION_MAP: Dict[str, str] = {
-    "Neutral":       "",
-    "Nostalgic":     "nostalgic and reflective, as if recalling a cherished memory",
-    "Melancholic":   "melancholic and somber, with quiet sadness",
-    "Warm & Tender": "warm and tender, deeply affectionate",
-    "Joyful":        "joyful and uplifting, with a light and happy energy",
-    "Longing":       "filled with longing and quiet yearning",
-    "Calm":          "calm and peaceful, like still water",
-    "Intense":       "intense and passionate, with emotional depth",
-    "Somber":        "somber and serious, heavy with meaning",
-    "Hopeful":       "hopeful and gently optimistic",
-    "Playful":       "playful and light-hearted, with a hint of warmth",
+# Each emotion has a characteristic base temperature.
+# Calm/Somber = lower (controlled); Joyful/Intense = higher (expressive).
+EMOTION_BASE_TEMP: Dict[str, float] = {
+    "Neutral":       0.70,
+    "Nostalgic":     0.80,
+    "Melancholic":   0.75,
+    "Warm & Tender": 0.72,
+    "Joyful":        0.88,
+    "Longing":       0.78,
+    "Calm":          0.58,
+    "Intense":       0.92,
+    "Somber":        0.63,
+    "Hopeful":       0.82,
+    "Playful":       0.88,
 }
-
-INTENSITY_WORDS: List[Tuple[int, str]] = [
-    (3,  "subtly"),
-    (5,  "moderately"),
-    (7,  "strongly"),
-    (9,  "very strongly"),
-    (10, "profoundly"),
-]
-
-WARMTH_PHRASES: List[Tuple[int, str]] = [
-    (2,  "cool and detached tone"),
-    (4,  "slightly reserved tone"),
-    (6,  ""),           # neutral — omit
-    (8,  "warm and intimate delivery"),
-    (10, "deeply warm and personal delivery"),
-]
 
 PACE_PHRASES: Dict[str, str] = {
-    "Unhurried": "Take your time — speak slowly and let each word breathe.",
-    "Natural":   "",
-    "Brisk":     "Speak at a slightly brisk, energetic pace.",
+    "Unhurried": "Unhurried",
+    "Natural":   "Natural",
+    "Brisk":     "Brisk",
 }
 
 
-def _pick_descriptor(value: int, table: List[Tuple[int, str]]) -> str:
-    """Pick the phrase from a sorted (threshold, phrase) table."""
-    result = table[-1][1]
-    for threshold, phrase in table:
-        if value <= threshold:
-            result = phrase
-            break
-    return result
-
-
-def build_emotion_instruct(
+def compute_gen_params(
     emotion: str,
-    intensity: int,
-    warmth: int,
-    pace: str,
-    custom_addon: str,
+    intensity: int,   # 1-10: how expressive the delivery is
+    warmth: int,      # 1-10: tonal warmth (affects repetition_penalty)
+    stability: int,   # 1-10: consistency (inversely scales temperature)
+) -> Tuple[float, float, float]:
+    """
+    Map slider values to model sampling parameters.
+    Returns (temperature, top_p, repetition_penalty).
+    Nothing is injected into the spoken text.
+    """
+    # Base temperature from emotion preset
+    base_temp = EMOTION_BASE_TEMP.get(emotion, 0.70)
+
+    # Stability (1=expressive, 10=consistent) scales base_temp
+    # stability=10 -> 60% of base; stability=1 -> 130% of base
+    stability_mult = 1.30 - (stability - 1) * (0.70 / 9)
+    temperature = round(min(1.4, max(0.25, base_temp * stability_mult)), 2)
+
+    # Intensity (1-10) -> top_p: higher intensity = wider sampling mass
+    top_p = round(0.85 + (intensity - 1) * (0.14 / 9), 3)
+
+    # Warmth (1-10) -> repetition_penalty: warmer = slight penalty to avoid
+    # robotic repetition; cool = closer to 1.0 (more neutral)
+    rep_penalty = round(1.0 + (warmth - 1) * (0.07 / 9), 3)
+
+    return temperature, top_p, rep_penalty
+
+
+def preview_gen_params(
+    emotion: str, intensity: int, warmth: int, stability: int
 ) -> str:
-    """
-    Combine emotion controls into a single style-annotation string.
-    The output is injected as a [style: ...] bracket before the poem text.
-    """
-    parts: List[str] = []
+    """Live-preview: show computed sampling parameters."""
+    t, top_p, rep = compute_gen_params(emotion, intensity, warmth, stability)
+    return (
+        f"temperature={t}  ·  top_p={top_p}  ·  repetition_penalty={rep}\n"
+        f"(Nothing extra is spoken — these control HOW the model generates)"
+    )
 
-    # Emotion + intensity
-    emotion_desc = EMOTION_MAP.get(emotion, "")
-    if emotion_desc:
-        intensity_word = _pick_descriptor(intensity, INTENSITY_WORDS)
-        parts.append(f"{intensity_word} {emotion_desc}")
-
-    # Warmth
-    warmth_desc = _pick_descriptor(warmth, WARMTH_PHRASES)
-    if warmth_desc:
-        parts.append(warmth_desc)
-
-    # Pace
-    pace_phrase = PACE_PHRASES.get(pace, "")
-    if pace_phrase:
-        parts.append(pace_phrase)
-
-    # Custom addon
-    if custom_addon and custom_addon.strip():
-        parts.append(custom_addon.strip())
-
-    if not parts:
-        return ""
-    return "[style: " + "; ".join(parts) + "]"
-
-
-def emotion_to_temperature(stability: int) -> float:
-    """
-    Map stability slider (1-10) to temperature.
-    High stability → low temperature (consistent, controlled).
-    Low stability  → high temperature (expressive, varied).
-    """
-    # stability=10 → temp=0.40, stability=1 → temp=1.05
-    return round(1.05 - (stability - 1) * (0.65 / 9), 2)
-
-
-def preview_emotion_instruct(
-    emotion: str, intensity: int, warmth: int, pace: str, custom_addon: str
-) -> str:
-    """Live-preview handler — returns the built instruct string for display."""
-    result = build_emotion_instruct(emotion, intensity, warmth, pace, custom_addon)
-    if not result:
-        return "(no style annotation — using model defaults)"
-    return result
 
 
 # ─────────────────────────────────────────────
@@ -348,13 +307,12 @@ def run_voice_clone(
     target_text: str,
     language: str,
     whisper_size: str,
-    # emotion controls
+    # emotion controls → mapped to sampling params, NOT injected as text
     emotion: str = "Neutral",
     intensity: int = 5,
     warmth: int = 5,
     pace: str = "Natural",
     stability: int = 6,
-    custom_addon: str = "",
 ) -> Tuple[Optional[Any], str]:
     try:
         if not target_text or not target_text.strip():
@@ -369,23 +327,24 @@ def run_voice_clone(
                 "or enable 'Use x-vector only'."
             )
 
-        # Build style annotation and inject into text
-        style_cue = build_emotion_instruct(emotion, intensity, warmth, pace, custom_addon)
-        final_text = f"{style_cue}\n{target_text.strip()}" if style_cue else target_text.strip()
-
-        # Derive temperature from stability slider
-        temperature = emotion_to_temperature(stability)
+        # Map emotion controls → sampling parameters (no text injection)
+        temperature, top_p, rep_penalty = compute_gen_params(emotion, intensity, warmth, stability)
 
         tts = load_tts(model_id)
         wavs, sr = tts.generate_voice_clone(
-            text=final_text,
+            text=target_text.strip(),   # ← only the actual text, nothing extra
             language=language,
             ref_audio=at,
             ref_text=ref_text.strip() if ref_text else None,
             x_vector_only_mode=bool(use_xvec),
             temperature=temperature,
+            top_p=top_p,
+            repetition_penalty=rep_penalty,
         )
-        status = f"✅ Generation complete.  (temp={temperature}, style: {style_cue or 'none'})"
+        status = (
+            f"✅ Done.  emotion={emotion}  temp={temperature}  "
+            f"top_p={top_p}  rep_penalty={rep_penalty}"
+        )
         return (sr, wavs[0].astype(np.float32)), status
     except Exception as e:
         return None, f"❌ {type(e).__name__}: {e}"
@@ -585,12 +544,13 @@ def build_app(default_whisper: str = "base") -> gr.Blocks:
                             label="Custom Style Add-on (optional)",
                             lines=1,
                             placeholder='e.g. "with subtle breathiness" or "like a gentle lullaby"',
+                            visible=False,  # hidden — adding this to text would be spoken aloud
                         )
                         vc_instruct_preview = gr.Textbox(
-                            label="📋 Style Annotation Preview (sent to model)",
+                            label="� Sampling Params Preview",
                             lines=2,
                             interactive=False,
-                            value="(no style annotation — using model defaults)",
+                            value="temperature=0.76  ·  top_p=0.866  ·  repetition_penalty=1.04",
                         )
 
                     vc_gen_btn = gr.Button("🔊 Generate", variant="primary", size="lg")
@@ -610,12 +570,12 @@ def build_app(default_whisper: str = "base") -> gr.Blocks:
                     vc_srt_out = gr.File(label="SRT Subtitle File", file_types=[".srt"])
 
             # ── Event handlers ────────────────────────────────────────────
-            # Live preview: update annotation whenever any emotion control changes
-            emotion_inputs = [vc_emotion, vc_intensity, vc_warmth, vc_pace, vc_custom_addon]
-            for ctrl in emotion_inputs:
+            # Live preview: update sampling params whenever any slider/dropdown changes
+            emotion_inputs_preview = [vc_emotion, vc_intensity, vc_warmth, vc_stability]
+            for ctrl in emotion_inputs_preview:
                 ctrl.change(
-                    fn=preview_emotion_instruct,
-                    inputs=emotion_inputs,
+                    fn=preview_gen_params,
+                    inputs=emotion_inputs_preview,
                     outputs=[vc_instruct_preview],
                 )
 
@@ -631,7 +591,7 @@ def build_app(default_whisper: str = "base") -> gr.Blocks:
                     vc_model_id, vc_ref_audio, vc_ref_text, vc_xvec,
                     vc_target_text, vc_lang, vc_whisper_size,
                     vc_emotion, vc_intensity, vc_warmth, vc_pace,
-                    vc_stability, vc_custom_addon,
+                    vc_stability,
                 ],
                 outputs=[vc_audio_out, vc_status],
             )
